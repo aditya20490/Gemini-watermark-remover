@@ -55,11 +55,6 @@ const PREDEFINED_POLYGON = [
 ];
 
 
-/*
- * The polygon was previously expanded by approximately
- * 1 pixel on the 1024 × 1024 reference image.
- */
-
 const POLYGON_EXPANSION = 1 / 1024;
 
 const centerX =
@@ -74,11 +69,6 @@ const centerY =
     0
   ) / PREDEFINED_POLYGON.length;
 
-
-/*
- * Expand the polygon normally, then move the
- * LEFTMOST VERTEX an additional 2 pixels left.
- */
 
 const EXPANDED_POLYGON =
   PREDEFINED_POLYGON.map(([x, y]) => {
@@ -106,8 +96,7 @@ const EXPANDED_POLYGON =
 
 
 /*
- * Move only the leftmost vertex 2 additional
- * pixels to the left on the 1024 × 1024 reference.
+ * Move only the leftmost vertex an additional 2 pixels left.
  */
 
 let leftmostIndex = 0;
@@ -129,6 +118,16 @@ for (
 
 EXPANDED_POLYGON[leftmostIndex][0] -=
   2 / 1024;
+
+
+/* ============================================================
+   WEBP SETTINGS
+   ============================================================ */
+
+const MIN_OUTPUT_KB = 300;
+const MAX_OUTPUT_KB = 500;
+
+const TARGET_OUTPUT_KB = 400;
 
 
 /* ============================================================
@@ -996,6 +995,12 @@ generateBtn.addEventListener(
 
 async function processRemainingFiles() {
 
+  const files =
+    Array.from(
+      upload.files || []
+    );
+
+
   for (
     let i =
       currentFileIndex + 1;
@@ -1011,9 +1016,7 @@ async function processRemainingFiles() {
 
 
     const file =
-      Array.from(
-        upload.files || []
-      )[i];
+      files[i];
 
 
     if (!file) {
@@ -1092,6 +1095,272 @@ async function processRemainingFiles() {
 
 
 /* ============================================================
+   WEBP ENCODING
+   ============================================================ */
+
+/*
+ * Encode the image repeatedly until the file is
+ * approximately 300–500 KB.
+ *
+ * We use binary search so this does not create
+ * dozens of unnecessary files.
+ */
+
+async function encodeWebPForTargetSize() {
+
+  const exportCanvas =
+    document.createElement(
+      "canvas"
+    );
+
+
+  exportCanvas.width =
+    originalImageData.width;
+
+  exportCanvas.height =
+    originalImageData.height;
+
+
+  const exportCtx =
+    exportCanvas.getContext(
+      "2d"
+    );
+
+
+  exportCtx.putImageData(
+    originalImageData,
+    0,
+    0
+  );
+
+
+  /*
+   * First try maximum quality.
+   */
+
+  let high = 1.0;
+  let low = 0.05;
+
+  let bestBlob = null;
+
+  let bestDifference =
+    Infinity;
+
+
+  /*
+   * If even maximum quality is below
+   * 300 KB, that maximum-quality file
+   * is the best possible WebP result.
+   */
+
+  const maximumQualityBlob =
+    await canvasToWebP(
+      exportCanvas,
+      1.0
+    );
+
+
+  const maximumSize =
+    maximumQualityBlob.size / 1024;
+
+
+  if (
+    maximumSize <=
+    TARGET_OUTPUT_KB
+  ) {
+
+    return maximumQualityBlob;
+
+  }
+
+
+  /*
+   * Binary-search quality.
+   *
+   * Higher quality = larger file.
+   */
+
+  for (
+    let i = 0;
+    i < 10;
+    i++
+  ) {
+
+    const quality =
+      (low + high) / 2;
+
+
+    const blob =
+      await canvasToWebP(
+        exportCanvas,
+        quality
+      );
+
+
+    const sizeKB =
+      blob.size / 1024;
+
+
+    /*
+     * Prefer files inside 300–500 KB.
+     */
+
+    if (
+      sizeKB >=
+        MIN_OUTPUT_KB &&
+      sizeKB <=
+        MAX_OUTPUT_KB
+    ) {
+
+      const difference =
+        Math.abs(
+          sizeKB -
+          TARGET_OUTPUT_KB
+        );
+
+
+      if (
+        difference <
+        bestDifference
+      ) {
+
+        bestBlob = blob;
+
+        bestDifference =
+          difference;
+
+      }
+
+    }
+
+
+    /*
+     * If file is too small,
+     * increase quality.
+     */
+
+    if (
+      sizeKB <
+      TARGET_OUTPUT_KB
+    ) {
+
+      low = quality;
+
+    } else {
+
+      /*
+       * File is too large.
+       * Reduce quality.
+       */
+
+      high = quality;
+
+    }
+
+  }
+
+
+  /*
+   * If we found a file in the requested
+   * range, use the closest one.
+   */
+
+  if (bestBlob) {
+    return bestBlob;
+  }
+
+
+  /*
+   * Otherwise return the quality closest
+   * to the 400 KB target.
+   */
+
+  let closestBlob =
+    maximumQualityBlob;
+
+  let closestDifference =
+    Math.abs(
+      maximumSize -
+      TARGET_OUTPUT_KB
+    );
+
+
+  for (
+    let quality = 0.1;
+    quality <= 1.0;
+    quality += 0.1
+  ) {
+
+    const blob =
+      await canvasToWebP(
+        exportCanvas,
+        Math.min(
+          1,
+          quality
+        )
+      );
+
+
+    const sizeKB =
+      blob.size / 1024;
+
+
+    const difference =
+      Math.abs(
+        sizeKB -
+        TARGET_OUTPUT_KB
+      );
+
+
+    if (
+      difference <
+      closestDifference
+    ) {
+
+      closestBlob = blob;
+
+      closestDifference =
+        difference;
+
+    }
+
+  }
+
+
+  return closestBlob;
+
+}
+
+
+/* ============================================================
+   CANVAS → WEBP
+   ============================================================ */
+
+function canvasToWebP(
+  canvasElement,
+  quality
+) {
+
+  return new Promise(
+    resolve => {
+
+      canvasElement.toBlob(
+        blob => {
+
+          resolve(blob);
+
+        },
+        "image/webp",
+        quality
+      );
+
+    }
+  );
+
+}
+
+
+/* ============================================================
    SAVE
    ============================================================ */
 
@@ -1106,98 +1375,78 @@ downloadBtn.addEventListener(
       return;
     }
 
-    await saveCurrentAsWebP(
-      "healed-image.webp"
-    );
+
+    downloadBtn.disabled = true;
+
+    downloadBtn.textContent =
+      "Preparing...";
+
+
+    try {
+
+      await saveCurrentAsWebP(
+        "healed-image.webp"
+      );
+
+    } finally {
+
+      downloadBtn.disabled = false;
+
+      downloadBtn.textContent =
+        "⬇️ Save WebP";
+
+    }
 
   }
 );
 
 
-function saveCurrentAsWebP(
+async function saveCurrentAsWebP(
   filename
 ) {
 
-  return new Promise(
-    resolve => {
-
-      const exportCanvas =
-        document.createElement(
-          "canvas"
-        );
+  const blob =
+    await encodeWebPForTargetSize();
 
 
-      exportCanvas.width =
-        originalImageData.width;
-
-      exportCanvas.height =
-        originalImageData.height;
+  if (!blob) {
+    return;
+  }
 
 
-      const exportCtx =
-        exportCanvas.getContext(
-          "2d"
-        );
+  const link =
+    document.createElement(
+      "a"
+    );
 
 
-      exportCtx.putImageData(
-        originalImageData,
-        0,
-        0
+  link.download =
+    filename;
+
+  link.href =
+    URL.createObjectURL(
+      blob
+    );
+
+
+  document.body.appendChild(
+    link
+  );
+
+  link.click();
+
+  link.remove();
+
+
+  setTimeout(
+    () => {
+
+      URL.revokeObjectURL(
+        link.href
       );
 
-
-      exportCanvas.toBlob(
-        blob => {
-
-          if (!blob) {
-            resolve();
-            return;
-          }
-
-
-          const link =
-            document.createElement(
-              "a"
-            );
-
-
-          link.download =
-            filename;
-
-          link.href =
-            URL.createObjectURL(
-              blob
-            );
-
-
-          document.body.appendChild(
-            link
-          );
-
-          link.click();
-
-          link.remove();
-
-
-          setTimeout(
-            () => {
-              URL.revokeObjectURL(
-                link.href
-              );
-            },
-            1000
-          );
-
-
-          resolve();
-
-        },
-        "image/webp",
-        0.95
-      );
-
-    }
+    },
+    1000
   );
 
 }
@@ -1218,6 +1467,7 @@ resetBtn.addEventListener(
       return;
     }
 
+
     if (
       mode === "predefined"
     ) {
@@ -1229,6 +1479,7 @@ resetBtn.addEventListener(
       mask.fill(0);
 
     }
+
 
     redrawOverlay();
 
