@@ -33,12 +33,17 @@
     </section>
 
     <section id="workspace" class="workspace hidden">
+      <div class="mode-switch">
+        <button id="modePredefined" class="mode-btn active">Predefined</button>
+        <button id="modeDoodle" class="mode-btn">Doodle</button>
+      </div>
+
       <div class="canvas-wrap">
         <canvas id="canvas"></canvas>
       </div>
 
       <div class="controls">
-        <div class="brush-row">
+        <div class="brush-row" id="brushRow">
           <label for="brush">Brush</label>
           <input type="range" id="brush" min="5" max="80" value="25" />
         </div>
