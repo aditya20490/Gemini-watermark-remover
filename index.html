@@ -1,30 +1,60 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="theme-color" content="#0d0d10" />
   <title>Heal Tool</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header>
-    <h1>Heal</h1>
+  <header class="app-header">
+    <div class="header-row">
+      <div class="logo">
+        <span class="logo-dot"></span>
+        <h1>Heal</h1>
+      </div>
+      <button id="themeToggle" class="icon-btn" aria-label="Toggle theme">
+        <span class="theme-icon-dark">🌙</span>
+        <span class="theme-icon-light">☀️</span>
+      </button>
+    </div>
+    <p class="tagline">Tap a spot. Heal it. Download.</p>
   </header>
 
   <main>
     <input type="file" id="upload" accept="image/*" hidden />
-    <button id="uploadBtn">📁 Upload Image</button>
 
-    <div id="workspace" class="hidden">
-      <canvas id="canvas"></canvas>
-      <div class="controls">
-        <label>Brush <input type="range" id="brush" min="5" max="80" value="25" /></label>
-        <button id="generate">✨ Generate</button>
-        <button id="download">⬇️ Download</button>
-        <button id="reset">↺ Reset</button>
+    <section id="emptyState" class="empty-state">
+      <div class="empty-icon">🩹</div>
+      <h2>No image yet</h2>
+      <p>Upload a photo to start healing spots, scratches, or unwanted objects.</p>
+      <button id="uploadBtn" class="btn btn-primary">📁 Upload Image</button>
+    </section>
+
+    <section id="workspace" class="workspace hidden">
+      <div class="canvas-wrap">
+        <canvas id="canvas"></canvas>
       </div>
-    </div>
+
+      <div class="controls">
+        <div class="brush-row">
+          <label for="brush">Brush</label>
+          <input type="range" id="brush" min="5" max="80" value="25" />
+        </div>
+
+        <div class="button-row">
+          <button id="generate" class="btn btn-accent">✨ Generate</button>
+          <button id="download" class="btn">⬇️ Save</button>
+          <button id="reset" class="btn btn-ghost">↺ Reset</button>
+        </div>
+      </div>
+    </section>
   </main>
+
+  <footer class="app-footer">
+    <span>Runs 100% in your browser · No upload · No tracking</span>
+  </footer>
 
   <script src="inpaint.js"></script>
   <script src="app.js"></script>
