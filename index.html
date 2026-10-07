@@ -2,64 +2,151 @@
 <html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-  <meta name="theme-color" content="#0d0d10" />
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"
+  />
+  <meta name="theme-color" content="#090b12" />
   <title>Heal Tool</title>
   <link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
   <header class="app-header">
     <div class="header-row">
       <div class="logo">
-        <span class="logo-dot"></span>
-        <h1>Heal</h1>
+        <span class="logo-mark">✦</span>
+        <div>
+          <h1>Heal</h1>
+          <span class="logo-sub">Photo retouching</span>
+        </div>
       </div>
+
       <button id="themeToggle" class="icon-btn" aria-label="Toggle theme">
-        <span class="theme-icon-dark">🌙</span>
-        <span class="theme-icon-light">☀️</span>
+        <span class="theme-icon-dark">☀</span>
+        <span class="theme-icon-light">☾</span>
       </button>
     </div>
-    <p class="tagline">Tap a spot. Heal it. Download.</p>
+
+    <p class="tagline">Remove small unwanted details directly in your browser.</p>
   </header>
 
   <main>
-    <input type="file" id="upload" accept="image/*" hidden />
-
     <section id="emptyState" class="empty-state">
-      <div class="empty-icon">🩹</div>
-      <h2>No image yet</h2>
-      <p>Upload a photo to start healing spots, scratches, or unwanted objects.</p>
-      <button id="uploadBtn" class="btn btn-primary">📁 Upload Image</button>
+      <div class="empty-icon">✦</div>
+      <div class="eyebrow">PRIVATE · LOCAL · FREE</div>
+      <h2>Heal a photo</h2>
+      <p>
+        Upload a square image, select the unwanted area, and let the healing
+        engine rebuild it from the surrounding pixels.
+      </p>
+
+      <button id="uploadBtn" class="btn btn-primary">
+        <span>＋</span>
+        Upload Image
+      </button>
+
+      <div class="feature-row">
+        <span>1:1 photos</span>
+        <span>•</span>
+        <span>No upload</span>
+        <span>•</span>
+        <span>No tracking</span>
+      </div>
     </section>
 
     <section id="workspace" class="workspace hidden">
+
+      <div class="topbar">
+        <div>
+          <div class="section-label">HEAL AREA</div>
+          <strong id="modeTitle">Predefined area</strong>
+        </div>
+
+        <button id="uploadAnother" class="small-btn">
+          Change photo
+        </button>
+      </div>
+
       <div class="mode-switch">
-        <button id="modePredefined" class="mode-btn active">Predefined</button>
-        <button id="modeDoodle" class="mode-btn">Doodle</button>
+        <button id="modePredefined" class="mode-btn active">
+          <span class="mode-dot"></span>
+          Predefined
+        </button>
+
+        <button id="modeDoodle" class="mode-btn">
+          <span class="mode-dot"></span>
+          Doodle
+        </button>
       </div>
 
-      <div class="canvas-wrap">
-        <canvas id="canvas"></canvas>
+      <div class="canvas-card">
+        <div class="canvas-wrap">
+          <canvas id="canvas"></canvas>
+
+          <div id="predefinedHint" class="canvas-hint">
+            Selected healing area
+          </div>
+        </div>
       </div>
 
-      <div class="controls">
-        <div class="brush-row" id="brushRow">
-          <label for="brush">Brush</label>
-          <input type="range" id="brush" min="5" max="80" value="25" />
+      <div id="brushRow" class="controls-card hidden">
+        <div class="control-heading">
+          <div>
+            <div class="section-label">DOODLE MODE</div>
+            <strong>Brush size</strong>
+          </div>
+
+          <span id="brushValue">25 px</span>
         </div>
 
-        <div class="button-row">
-          <button id="generate" class="btn btn-accent">✨ Generate</button>
-          <button id="download" class="btn">⬇️ Save</button>
-          <button id="reset" class="btn btn-ghost">↺ Reset</button>
+        <input
+          type="range"
+          id="brush"
+          min="5"
+          max="80"
+          value="25"
+        />
+      </div>
+
+      <div class="action-card">
+        <button id="generate" class="btn btn-primary btn-large">
+          <span>✦</span>
+          Heal selected area
+        </button>
+
+        <div class="secondary-actions">
+          <button id="reset" class="btn btn-secondary">
+            ↺ Reset
+          </button>
+
+          <button id="download" class="btn btn-secondary">
+            ↓ Save
+          </button>
         </div>
       </div>
+
+      <div class="status-card">
+        <div class="status-icon">✓</div>
+        <div>
+          <strong>Everything stays on your device</strong>
+          <p>Your image is processed locally in this browser.</p>
+        </div>
+      </div>
+
     </section>
   </main>
 
   <footer class="app-footer">
-    <span>Runs 100% in your browser · No upload · No tracking</span>
+    Heal Tool · Browser-based photo healing
   </footer>
+
+  <input
+    id="upload"
+    type="file"
+    accept="image/png,image/jpeg,image/webp"
+    hidden
+  />
 
   <script src="inpaint.js"></script>
   <script src="app.js"></script>
