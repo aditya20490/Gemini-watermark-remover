@@ -6,10 +6,13 @@ const workspace = document.getElementById('workspace');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d', { willReadFrequently: true });
 const brushSlider = document.getElementById('brush');
+const brushRow = document.getElementById('brushRow');
 const generateBtn = document.getElementById('generate');
 const downloadBtn = document.getElementById('download');
 const resetBtn = document.getElementById('reset');
 const themeToggle = document.getElementById('themeToggle');
+const modePredefined = document.getElementById('modePredefined');
+const modeDoodle = document.getElementById('modeDoodle');
 
 // ---------- Theme handling ----------
 const THEME_KEY = 'heal-tool-theme';
@@ -40,11 +43,40 @@ themeToggle.addEventListener('click', () => {
 
 initTheme();
 
+// ---------- Predefined region ----------
+// Normalized coordinates (0..1, origin top-left) of the polygon to heal
+// when "Predefined" mode is active.
+const PREDEFINED_POLYGON = [
+  [0.8896, 0.8525],
+  [0.9141, 0.8809],
+  [0.8789, 0.9092],
+  [0.8604, 0.8770],
+];
+
 // ---------- State ----------
 let originalImageData = null;
 let mask = null;
 let drawing = false;
 let lastPos = null;
+let mode = 'predefined'; // 'predefined' | 'doodle'
+
+// ---------- Mode switching ----------
+function setMode(newMode) {
+  mode = newMode;
+  if (mode === 'predefined') {
+    modePredefined.classList.add('active');
+    modeDoodle.classList.remove('active');
+    brushRow.style.display = 'none';
+  } else {
+    modeDoodle.classList.add('active');
+    modePredefined.classList.remove('active');
+    brushRow.style.display = 'flex';
+  }
+  redrawOverlay();
+}
+
+modePredefined.addEventListener('click', () => setMode('predefined'));
+modeDoodle.addEventListener('click', () => setMode('doodle'));
 
 // ---------- Upload ----------
 uploadBtn.onclick = () => uploadInput.click();
@@ -64,9 +96,60 @@ uploadInput.onchange = (e) => {
 
     emptyState.classList.add('hidden');
     workspace.classList.remove('hidden');
+
+    setMode(mode); // triggers redrawOverlay()
   };
   img.src = URL.createObjectURL(file);
 };
+
+// ---------- Overlay rendering (mask preview) ----------
+function redrawOverlay() {
+  if (!originalImageData) return;
+  // Draw the pristine image, then overlay the current mask
+  ctx.putImageData(originalImageData, 0, 0);
+
+  if (mode === 'predefined') {
+    drawPredefinedOverlay();
+  } else {
+    drawMaskOverlay();
+  }
+}
+
+function drawPredefinedOverlay() {
+  const W = canvas.width;
+  const H = canvas.height;
+  const pts = PREDEFINED_POLYGON.map(([nx, ny]) => [nx * W, ny * H]);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(255, 0, 0, 0.35)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255, 80, 80, 0.9)';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawMaskOverlay() {
+  if (!mask) return;
+  const W = canvas.width;
+  const H = canvas.height;
+  const img = ctx.getImageData(0, 0, W, H);
+  const d = img.data;
+  for (let i = 0; i < mask.length; i++) {
+    if (mask[i]) {
+      const p = i * 4;
+      d[p] = Math.round(d[p] * 0.6 + 255 * 0.4);
+      d[p + 1] = Math.round(d[p + 1] * 0.6);
+      d[p + 2] = Math.round(d[p + 2] * 0.6);
+      d[p + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
 
 // ---------- Pointer helpers ----------
 function getPos(evt) {
@@ -81,11 +164,6 @@ function getPos(evt) {
 
 function paintAt(x, y) {
   const r = Number(brushSlider.value);
-  ctx.beginPath();
-  ctx.arc(x, y, r, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(255, 0, 0, 0.5)';
-  ctx.fill();
-
   const x0 = Math.max(0, Math.floor(x - r));
   const x1 = Math.min(canvas.width - 1, Math.ceil(x + r));
   const y0 = Math.max(0, Math.floor(y - r));
@@ -101,14 +179,16 @@ function paintAt(x, y) {
 }
 
 function onDown(e) {
+  if (mode !== 'doodle') return;
   e.preventDefault();
   drawing = true;
   lastPos = getPos(e);
   paintAt(lastPos.x, lastPos.y);
+  redrawOverlay();
 }
 
 function onMove(e) {
-  if (!drawing) return;
+  if (mode !== 'doodle' || !drawing) return;
   e.preventDefault();
   const p = getPos(e);
   const dist = Math.hypot(p.x - lastPos.x, p.y - lastPos.y);
@@ -118,6 +198,7 @@ function onMove(e) {
     paintAt(lastPos.x + (p.x - lastPos.x) * t, lastPos.y + (p.y - lastPos.y) * t);
   }
   lastPos = p;
+  redrawOverlay();
 }
 
 function onUp() {
@@ -133,6 +214,51 @@ canvas.addEventListener('touchstart', onDown, { passive: false });
 canvas.addEventListener('touchmove', onMove, { passive: false });
 canvas.addEventListener('touchend', onUp);
 
+// ---------- Build a mask from the predefined polygon ----------
+function buildPredefinedMask() {
+  const W = canvas.width;
+  const H = canvas.height;
+  const m = new Uint8Array(W * H);
+
+  const pts = PREDEFINED_POLYGON.map(([nx, ny]) => [nx * W, ny * H]);
+
+  // Bounding box
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [x, y] of pts) {
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+  }
+  minX = Math.max(0, Math.floor(minX));
+  minY = Math.max(0, Math.floor(minY));
+  maxX = Math.min(W - 1, Math.ceil(maxX));
+  maxY = Math.min(H - 1, Math.ceil(maxY));
+
+  // Ray-casting point-in-polygon test
+  function pointInPoly(px, py) {
+    let inside = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const xi = pts[i][0], yi = pts[i][1];
+      const xj = pts[j][0], yj = pts[j][1];
+      const intersect =
+        ((yi > py) !== (yj > py)) &&
+        (px < ((xj - xi) * (py - yi)) / (yj - yi + 1e-9) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
+  for (let y = minY; y <= maxY; y++) {
+    for (let x = minX; x <= maxX; x++) {
+      if (pointInPoly(x + 0.5, y + 0.5)) {
+        m[y * W + x] = 1;
+      }
+    }
+  }
+  return m;
+}
+
 // ---------- Generate (heal) ----------
 generateBtn.onclick = () => {
   if (!originalImageData) return;
@@ -145,26 +271,46 @@ generateBtn.onclick = () => {
     canvas.height
   );
 
+  const activeMask =
+    mode === 'predefined' ? buildPredefinedMask() : mask;
+
   setTimeout(() => {
-    window.inpaint(working, mask, 5);
+    window.inpaint(working, activeMask, 5);
     ctx.putImageData(working, 0, 0);
+
+    // Reset for the next pass
+    originalImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     mask = new Uint8Array(canvas.width * canvas.height);
+
     generateBtn.disabled = false;
     generateBtn.textContent = '✨ Generate';
+    redrawOverlay();
   }, 30);
 };
 
 // ---------- Reset ----------
 resetBtn.onclick = () => {
   if (!originalImageData) return;
-  ctx.putImageData(originalImageData, 0, 0);
   mask = new Uint8Array(canvas.width * canvas.height);
+  redrawOverlay();
 };
 
 // ---------- Download ----------
 downloadBtn.onclick = () => {
+  // Export without the red overlay
+  const W = canvas.width;
+  const H = canvas.height;
+  const out = document.createElement('canvas');
+  out.width = W;
+  out.height = H;
+  const octx = out.getContext('2d');
+  octx.putImageData(originalImageData, 0, 0);
+
   const link = document.createElement('a');
   link.download = 'healed.png';
-  link.href = canvas.toDataURL('image/png');
+  link.href = out.toDataURL('image/png');
   link.click();
 };
+
+// ---------- Initial mode ----------
+setMode('predefined');
