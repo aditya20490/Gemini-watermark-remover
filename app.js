@@ -19,15 +19,15 @@ const modePredefined = document.getElementById("modePredefined");
 const modeDoodle = document.getElementById("modeDoodle");
 
 let originalImageData = null;
+let originalFile = null;
+let selectedFiles = [];
+let currentFileIndex = 0;
+
 let mask = null;
 let drawing = false;
 let lastPos = null;
 let mode = "predefined";
 
-/*
- * Original polygon coordinates.
- * These are normalized against the original 1024x1024 reference image.
- */
 const PREDEFINED_POLYGON = [
   [0.8896, 0.8525],
   [0.9141, 0.8809],
@@ -35,24 +35,20 @@ const PREDEFINED_POLYGON = [
   [0.8604, 0.8770],
 ];
 
-/*
- * Expand the polygon outward by approximately 1 pixel
- * on the 1024x1024 reference image.
- */
 const POLYGON_EXPANSION = 1 / 1024;
 
+const centerX =
+  PREDEFINED_POLYGON.reduce((sum, p) => sum + p[0], 0) /
+  PREDEFINED_POLYGON.length;
+
+const centerY =
+  PREDEFINED_POLYGON.reduce((sum, p) => sum + p[1], 0) /
+  PREDEFINED_POLYGON.length;
+
 const EXPANDED_POLYGON = PREDEFINED_POLYGON.map(([x, y]) => {
-  const centerX =
-    PREDEFINED_POLYGON.reduce((sum, point) => sum + point[0], 0) /
-    PREDEFINED_POLYGON.length;
-
-  const centerY =
-    PREDEFINED_POLYGON.reduce((sum, point) => sum + point[1], 0) /
-    PREDEFINED_POLYGON.length;
-
   const dx = x - centerX;
   const dy = y - centerY;
-  const length = Math.sqrt(dx * dx + dy * dy) || 1;
+  const length = Math.hypot(dx, dy) || 1;
 
   return [
     x + (dx / length) * POLYGON_EXPANSION,
@@ -60,60 +56,111 @@ const EXPANDED_POLYGON = PREDEFINED_POLYGON.map(([x, y]) => {
   ];
 });
 
-/* ---------------- Theme ---------------- */
+/* --------------------------------------------------
+   THEME
+-------------------------------------------------- */
 
 themeToggle.addEventListener("click", () => {
   const html = document.documentElement;
   const current = html.getAttribute("data-theme");
-  const next = current === "dark" ? "light" : "dark";
 
-  html.setAttribute("data-theme", next);
+  html.setAttribute(
+    "data-theme",
+    current === "dark" ? "light" : "dark"
+  );
 });
 
-/* ---------------- Upload ---------------- */
+/* --------------------------------------------------
+   UPLOAD
+-------------------------------------------------- */
 
 uploadBtn.addEventListener("click", () => {
   upload.click();
 });
 
-upload.addEventListener("change", () => {
-  const file = upload.files?.[0];
-  if (!file) return;
+upload.addEventListener("change", async () => {
+  const files = Array.from(upload.files || []);
 
-  const img = new Image();
+  if (!files.length) return;
 
-  img.onload = () => {
-    const maxW = Math.min(window.innerWidth - 24, 1200);
-    const scale = Math.min(1, maxW / img.width);
+  if (files.length > 20) {
+    alert("You can select a maximum of 20 images at once.");
+    upload.value = "";
+    return;
+  }
 
-    canvas.width = Math.round(img.width * scale);
-    canvas.height = Math.round(img.height * scale);
+  selectedFiles = files;
+  currentFileIndex = 0;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-    originalImageData = ctx.getImageData(
-      0,
-      0,
-      canvas.width,
-      canvas.height
-    );
-
-    mask = new Uint8Array(canvas.width * canvas.height);
-
-    emptyState.classList.add("hidden");
-    workspace.classList.remove("hidden");
-
-    setMode("predefined");
-    redrawOverlay();
-
-    URL.revokeObjectURL(img.src);
-  };
-
-  img.src = URL.createObjectURL(file);
+  await loadImageFile(selectedFiles[0]);
 });
 
-/* ---------------- Modes ---------------- */
+/* --------------------------------------------------
+   LOAD IMAGE
+-------------------------------------------------- */
+
+function loadImageFile(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const objectUrl = URL.createObjectURL(file);
+
+    img.onload = () => {
+      const maxW = Math.min(window.innerWidth - 24, 1200);
+      const scale = Math.min(1, maxW / img.width);
+
+      canvas.width = Math.max(1, Math.round(img.width * scale));
+      canvas.height = Math.max(1, Math.round(img.height * scale));
+
+      ctx.clearRect(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+      );
+
+      ctx.drawImage(
+        img,
+        0,
+        0,
+        canvas.width,
+        canvas.height
+      );
+
+      originalImageData = ctx.getImageData(
+        0,
+        0,
+        canvas.width,
+        canvas.height
+      );
+
+      originalFile = file;
+
+      mask = new Uint8Array(
+        canvas.width * canvas.height
+      );
+
+      emptyState.classList.add("hidden");
+      workspace.classList.remove("hidden");
+
+      setMode("predefined");
+
+      URL.revokeObjectURL(objectUrl);
+
+      resolve();
+    };
+
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Could not load image."));
+    };
+
+    img.src = objectUrl;
+  });
+}
+
+/* --------------------------------------------------
+   MODES
+-------------------------------------------------- */
 
 function setMode(nextMode) {
   mode = nextMode;
@@ -133,6 +180,8 @@ function setMode(nextMode) {
     mode !== "doodle"
   );
 
+  if (!mask) return;
+
   if (mode === "predefined") {
     buildPredefinedMask();
   } else {
@@ -150,21 +199,29 @@ modeDoodle.addEventListener("click", () => {
   setMode("doodle");
 });
 
-/* ---------------- Predefined mask ---------------- */
+/* --------------------------------------------------
+   PREDEFINED MASK
+-------------------------------------------------- */
 
 function buildPredefinedMask() {
-  if (!canvas.width || !canvas.height || !mask) return;
+  if (!mask) return;
 
   mask.fill(0);
 
-  const points = EXPANDED_POLYGON.map(([nx, ny]) => [
-    nx * canvas.width,
-    ny * canvas.height,
+  const points = EXPANDED_POLYGON.map(([x, y]) => [
+    x * canvas.width,
+    y * canvas.height,
   ]);
 
   for (let y = 0; y < canvas.height; y++) {
     for (let x = 0; x < canvas.width; x++) {
-      if (pointInPolygon(x + 0.5, y + 0.5, points)) {
+      if (
+        pointInPolygon(
+          x + 0.5,
+          y + 0.5,
+          points
+        )
+      ) {
         mask[y * canvas.width + x] = 1;
       }
     }
@@ -187,7 +244,10 @@ function pointInPolygon(x, y, polygon) {
 
     const intersects =
       yi > y !== yj > y &&
-      x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+      x <
+        ((xj - xi) * (y - yi)) /
+          (yj - yi) +
+          xi;
 
     if (intersects) {
       inside = !inside;
@@ -197,12 +257,18 @@ function pointInPolygon(x, y, polygon) {
   return inside;
 }
 
-/* ---------------- Drawing overlay ---------------- */
+/* --------------------------------------------------
+   OVERLAY
+-------------------------------------------------- */
 
 function redrawOverlay() {
   if (!originalImageData) return;
 
-  ctx.putImageData(originalImageData, 0, 0);
+  ctx.putImageData(
+    originalImageData,
+    0,
+    0
+  );
 
   if (mode === "predefined") {
     drawPredefinedOverlay();
@@ -212,27 +278,45 @@ function redrawOverlay() {
 }
 
 function drawPredefinedOverlay() {
-  const points = EXPANDED_POLYGON.map(([nx, ny]) => [
-    nx * canvas.width,
-    ny * canvas.height,
-  ]);
+  const points = EXPANDED_POLYGON.map(
+    ([x, y]) => [
+      x * canvas.width,
+      y * canvas.height,
+    ]
+  );
 
   ctx.save();
 
   ctx.beginPath();
-  ctx.moveTo(points[0][0], points[0][1]);
+
+  ctx.moveTo(
+    points[0][0],
+    points[0][1]
+  );
 
   for (let i = 1; i < points.length; i++) {
-    ctx.lineTo(points[i][0], points[i][1]);
+    ctx.lineTo(
+      points[i][0],
+      points[i][1]
+    );
   }
 
   ctx.closePath();
 
-  ctx.fillStyle = "rgba(255, 69, 58, 0.22)";
+  ctx.fillStyle =
+    "rgba(255,69,58,0.22)";
+
   ctx.fill();
 
-  ctx.strokeStyle = "#ff453a";
-  ctx.lineWidth = Math.max(1.5, canvas.width / 700);
+  ctx.strokeStyle =
+    "#ff453a";
+
+  ctx.lineWidth =
+    Math.max(
+      1.5,
+      canvas.width / 700
+    );
+
   ctx.stroke();
 
   ctx.restore();
@@ -241,12 +325,17 @@ function drawPredefinedOverlay() {
 function drawDoodleOverlay() {
   if (!mask) return;
 
-  const overlay = ctx.createImageData(
-    canvas.width,
-    canvas.height
-  );
+  const overlay =
+    ctx.createImageData(
+      canvas.width,
+      canvas.height
+    );
 
-  for (let i = 0; i < mask.length; i++) {
+  for (
+    let i = 0;
+    i < mask.length;
+    i++
+  ) {
     if (!mask[i]) continue;
 
     const p = i * 4;
@@ -254,202 +343,421 @@ function drawDoodleOverlay() {
     overlay.data[p] = 255;
     overlay.data[p + 1] = 69;
     overlay.data[p + 2] = 58;
-    overlay.data[p + 3] = 85;
+    overlay.data[p + 3] = 90;
   }
 
-  ctx.putImageData(overlay, 0, 0);
+  ctx.putImageData(
+    overlay,
+    0,
+    0
+  );
 }
 
-/* ---------------- Doodle ---------------- */
+/* --------------------------------------------------
+   DOODLE
+-------------------------------------------------- */
 
-canvas.addEventListener("pointerdown", (event) => {
-  if (mode !== "doodle" || !mask) return;
+canvas.addEventListener(
+  "pointerdown",
+  (event) => {
+    if (
+      mode !== "doodle" ||
+      !mask
+    ) {
+      return;
+    }
 
-  drawing = true;
-  canvas.setPointerCapture(event.pointerId);
+    drawing = true;
 
-  lastPos = getCanvasPosition(event);
-  paint(lastPos.x, lastPos.y);
-});
+    canvas.setPointerCapture(
+      event.pointerId
+    );
 
-canvas.addEventListener("pointermove", (event) => {
-  if (!drawing || mode !== "doodle") return;
+    lastPos =
+      getCanvasPosition(event);
 
-  const pos = getCanvasPosition(event);
+    paint(
+      lastPos.x,
+      lastPos.y
+    );
+  }
+);
 
-  drawLine(
-    lastPos.x,
-    lastPos.y,
-    pos.x,
-    pos.y
-  );
+canvas.addEventListener(
+  "pointermove",
+  (event) => {
+    if (
+      !drawing ||
+      mode !== "doodle"
+    ) {
+      return;
+    }
 
-  lastPos = pos;
-});
+    const pos =
+      getCanvasPosition(event);
 
-canvas.addEventListener("pointerup", () => {
-  drawing = false;
-  lastPos = null;
-});
+    drawLine(
+      lastPos.x,
+      lastPos.y,
+      pos.x,
+      pos.y
+    );
 
-canvas.addEventListener("pointercancel", () => {
-  drawing = false;
-  lastPos = null;
-});
+    lastPos = pos;
+  }
+);
+
+canvas.addEventListener(
+  "pointerup",
+  () => {
+    drawing = false;
+    lastPos = null;
+  }
+);
+
+canvas.addEventListener(
+  "pointercancel",
+  () => {
+    drawing = false;
+    lastPos = null;
+  }
+);
 
 function getCanvasPosition(event) {
-  const rect = canvas.getBoundingClientRect();
+  const rect =
+    canvas.getBoundingClientRect();
 
   return {
     x:
-      ((event.clientX - rect.left) / rect.width) *
+      ((event.clientX - rect.left) /
+        rect.width) *
       canvas.width,
 
     y:
-      ((event.clientY - rect.top) / rect.height) *
+      ((event.clientY - rect.top) /
+        rect.height) *
       canvas.height,
   };
 }
 
 function paint(x, y) {
-  const radius = Number(brush.value) / 2;
+  const radius =
+    Number(brush.value) / 2;
 
-  const minX = Math.max(0, Math.floor(x - radius));
+  const minX = Math.max(
+    0,
+    Math.floor(x - radius)
+  );
+
   const maxX = Math.min(
     canvas.width - 1,
     Math.ceil(x + radius)
   );
 
-  const minY = Math.max(0, Math.floor(y - radius));
+  const minY = Math.max(
+    0,
+    Math.floor(y - radius)
+  );
+
   const maxY = Math.min(
     canvas.height - 1,
     Math.ceil(y + radius)
   );
 
-  for (let py = minY; py <= maxY; py++) {
-    for (let px = minX; px <= maxX; px++) {
+  for (
+    let py = minY;
+    py <= maxY;
+    py++
+  ) {
+    for (
+      let px = minX;
+      px <= maxX;
+      px++
+    ) {
       const dx = px - x;
       const dy = py - y;
 
-      if (dx * dx + dy * dy <= radius * radius) {
-        mask[py * canvas.width + px] = 1;
+      if (
+        dx * dx + dy * dy <=
+        radius * radius
+      ) {
+        mask[
+          py * canvas.width + px
+        ] = 1;
       }
     }
   }
-}
-
-function drawLine(x1, y1, x2, y2) {
-  const distance = Math.hypot(x2 - x1, y2 - y1);
-  const step = Math.max(1, Number(brush.value) / 4);
-
-  for (let i = 0; i <= distance; i += step) {
-    const t = distance === 0 ? 0 : i / distance;
-
-    const x = x1 + (x2 - x1) * t;
-    const y = y1 + (y2 - y1) * t;
-
-    paint(x, y);
-  }
 
   redrawOverlay();
 }
 
-/* ---------------- Generate ---------------- */
-
-generateBtn.addEventListener("click", async () => {
-  if (!originalImageData || !mask) return;
-
-  generateBtn.disabled = true;
-  generateBtn.textContent = "Healing...";
-
-  try {
-    const working = new ImageData(
-      new Uint8ClampedArray(originalImageData.data),
-      originalImageData.width,
-      originalImageData.height
+function drawLine(
+  x1,
+  y1,
+  x2,
+  y2
+) {
+  const distance =
+    Math.hypot(
+      x2 - x1,
+      y2 - y1
     );
 
-    let activeMask;
+  const step =
+    Math.max(
+      1,
+      Number(brush.value) / 4
+    );
+
+  for (
+    let i = 0;
+    i <= distance;
+    i += step
+  ) {
+    const t =
+      distance === 0
+        ? 0
+        : i / distance;
+
+    paint(
+      x1 + (x2 - x1) * t,
+      y1 + (y2 - y1) * t
+    );
+  }
+}
+
+/* --------------------------------------------------
+   GENERATE
+-------------------------------------------------- */
+
+generateBtn.addEventListener(
+  "click",
+  async () => {
+    if (
+      !originalImageData ||
+      !mask
+    ) {
+      return;
+    }
+
+    generateBtn.disabled = true;
+
+    try {
+      if (mode === "predefined") {
+        buildPredefinedMask();
+      }
+
+      const working =
+        new ImageData(
+          new Uint8ClampedArray(
+            originalImageData.data
+          ),
+          originalImageData.width,
+          originalImageData.height
+        );
+
+      const result =
+        await window.inpaint(
+          working,
+          mask,
+          8
+        );
+
+      originalImageData = result;
+
+      mask = new Uint8Array(
+        canvas.width *
+          canvas.height
+      );
+
+      ctx.putImageData(
+        originalImageData,
+        0,
+        0
+      );
+
+      /* Bulk mode */
+      if (
+        selectedFiles.length > 1
+      ) {
+        await downloadWebP(
+          originalImageData,
+          `healed-${currentFileIndex + 1}.webp`
+        );
+
+        for (
+          let i = 1;
+          i < selectedFiles.length;
+          i++
+        ) {
+          currentFileIndex = i;
+
+          generateBtn.textContent =
+            `Healing ${i + 1}/${selectedFiles.length}...`;
+
+          await loadImageFile(
+            selectedFiles[i]
+          );
+
+          buildPredefinedMask();
+
+          const nextWorking =
+            new ImageData(
+              new Uint8ClampedArray(
+                originalImageData.data
+              ),
+              originalImageData.width,
+              originalImageData.height
+            );
+
+          const nextResult =
+            await window.inpaint(
+              nextWorking,
+              mask,
+              8
+            );
+
+          originalImageData =
+            nextResult;
+
+          await downloadWebP(
+            originalImageData,
+            `healed-${i + 1}.webp`
+          );
+        }
+
+        generateBtn.textContent =
+          "✨ Done";
+
+        setTimeout(() => {
+          generateBtn.textContent =
+            "✨ Generate";
+        }, 1500);
+
+        return;
+      }
+    } catch (error) {
+      console.error(error);
+
+      alert(
+        "Healing failed. Please try again."
+      );
+    } finally {
+      generateBtn.disabled = false;
+    }
+  }
+);
+
+/* --------------------------------------------------
+   WEBP DOWNLOAD
+-------------------------------------------------- */
+
+function downloadWebP(
+  imageData,
+  filename
+) {
+  return new Promise((resolve) => {
+    const exportCanvas =
+      document.createElement(
+        "canvas"
+      );
+
+    exportCanvas.width =
+      imageData.width;
+
+    exportCanvas.height =
+      imageData.height;
+
+    const exportCtx =
+      exportCanvas.getContext(
+        "2d"
+      );
+
+    exportCtx.putImageData(
+      imageData,
+      0,
+      0
+    );
+
+    exportCanvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          resolve();
+          return;
+        }
+
+        const link =
+          document.createElement(
+            "a"
+          );
+
+        link.download =
+          filename;
+
+        link.href =
+          URL.createObjectURL(
+            blob
+          );
+
+        document.body.appendChild(
+          link
+        );
+
+        link.click();
+
+        link.remove();
+
+        setTimeout(() => {
+          URL.revokeObjectURL(
+            link.href
+          );
+
+          resolve();
+        }, 300);
+      },
+      "image/webp",
+      0.92
+    );
+  });
+}
+
+/* --------------------------------------------------
+   SAVE CURRENT
+-------------------------------------------------- */
+
+downloadBtn.addEventListener(
+  "click",
+  async () => {
+    if (!originalImageData) return;
+
+    await downloadWebP(
+      originalImageData,
+      "healed-image.webp"
+    );
+  }
+);
+
+/* --------------------------------------------------
+   RESET
+-------------------------------------------------- */
+
+resetBtn.addEventListener(
+  "click",
+  () => {
+    if (!originalImageData) return;
 
     if (mode === "predefined") {
       buildPredefinedMask();
-      activeMask = mask;
     } else {
-      activeMask = mask;
+      mask.fill(0);
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 30));
-
-    const result = window.inpaint(
-      working,
-      activeMask,
-      5
-    );
-
-    originalImageData = result;
-
-    mask = new Uint8Array(
-      canvas.width * canvas.height
-    );
-
-    ctx.putImageData(originalImageData, 0, 0);
-  } catch (error) {
-    console.error(error);
-    alert("Healing failed. Please try again.");
-  } finally {
-    generateBtn.disabled = false;
-    generateBtn.textContent = "✨ Generate";
+    redrawOverlay();
   }
-});
+);
 
-/* ---------------- Reset ---------------- */
-
-resetBtn.addEventListener("click", () => {
-  if (!originalImageData) return;
-
-  if (mode === "predefined") {
-    buildPredefinedMask();
-  } else {
-    mask.fill(0);
-  }
-
-  redrawOverlay();
-});
-
-/* ---------------- Download ---------------- */
-
-downloadBtn.addEventListener("click", () => {
-  if (!originalImageData) return;
-
-  const exportCanvas = document.createElement("canvas");
-
-  exportCanvas.width = originalImageData.width;
-  exportCanvas.height = originalImageData.height;
-
-  const exportCtx = exportCanvas.getContext("2d");
-
-  exportCtx.putImageData(
-    originalImageData,
-    0,
-    0
-  );
-
-  exportCanvas.toBlob((blob) => {
-    if (!blob) return;
-
-    const link = document.createElement("a");
-
-    link.download = "healed-image.png";
-    link.href = URL.createObjectURL(blob);
-
-    link.click();
-
-    setTimeout(() => {
-      URL.revokeObjectURL(link.href);
-    }, 1000);
-  }, "image/png");
-});
-
-/* ---------------- Initial state ---------------- */
+/* --------------------------------------------------
+   INITIAL
+-------------------------------------------------- */
 
 setMode("predefined");
