@@ -1,226 +1,96 @@
-// ============================================================
-// HEAL TOOL
-// ============================================================
-
-const uploadInput = document.getElementById("upload");
+const upload = document.getElementById("upload");
 const uploadBtn = document.getElementById("uploadBtn");
-const uploadAnother = document.getElementById("uploadAnother");
-
 const emptyState = document.getElementById("emptyState");
 const workspace = document.getElementById("workspace");
 
 const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d", {
-  willReadFrequently: true
-});
+const ctx = canvas.getContext("2d", { willReadFrequently: true });
 
-const brushSlider = document.getElementById("brush");
+const brush = document.getElementById("brush");
 const brushRow = document.getElementById("brushRow");
-const brushValue = document.getElementById("brushValue");
 
 const generateBtn = document.getElementById("generate");
 const downloadBtn = document.getElementById("download");
 const resetBtn = document.getElementById("reset");
 
+const themeToggle = document.getElementById("themeToggle");
+
 const modePredefined = document.getElementById("modePredefined");
 const modeDoodle = document.getElementById("modeDoodle");
 
-const modeTitle = document.getElementById("modeTitle");
-const predefinedHint = document.getElementById("predefinedHint");
+let originalImageData = null;
+let mask = null;
+let drawing = false;
+let lastPos = null;
+let mode = "predefined";
 
-const themeToggle = document.getElementById("themeToggle");
-
-
-// ============================================================
-// THEME
-// ============================================================
-
-const THEME_KEY = "heal-tool-theme";
-
-function applyTheme(theme) {
-  document.documentElement.setAttribute("data-theme", theme);
-
-  const meta = document.querySelector(
-    'meta[name="theme-color"]'
-  );
-
-  if (meta) {
-    meta.setAttribute(
-      "content",
-      theme === "dark" ? "#080a10" : "#f3f5f9"
-    );
-  }
-
-  try {
-    localStorage.setItem(THEME_KEY, theme);
-  } catch (_) {}
-}
-
-function initTheme() {
-  let saved = null;
-
-  try {
-    saved = localStorage.getItem(THEME_KEY);
-  } catch (_) {}
-
-  if (saved === "dark" || saved === "light") {
-    applyTheme(saved);
-    return;
-  }
-
-  applyTheme("dark");
-}
-
-themeToggle.addEventListener("click", () => {
-  const current =
-    document.documentElement.getAttribute("data-theme") ||
-    "dark";
-
-  applyTheme(
-    current === "dark" ? "light" : "dark"
-  );
-});
-
-initTheme();
-
-
-// ============================================================
-// PREDEFINED HEALING AREA
-// ============================================================
-//
-// This is the exact region you previously marked.
-//
-// Coordinates are normalized:
-// 0 = left/top
-// 1 = right/bottom
-//
-
+/*
+ * Original polygon coordinates.
+ * These are normalized against the original 1024x1024 reference image.
+ */
 const PREDEFINED_POLYGON = [
   [0.8896, 0.8525],
   [0.9141, 0.8809],
   [0.8789, 0.9092],
-  [0.8604, 0.8770]
+  [0.8604, 0.8770],
 ];
 
+/*
+ * Expand the polygon outward by approximately 1 pixel
+ * on the 1024x1024 reference image.
+ */
+const POLYGON_EXPANSION = 1 / 1024;
 
-// ============================================================
-// STATE
-// ============================================================
+const EXPANDED_POLYGON = PREDEFINED_POLYGON.map(([x, y]) => {
+  const centerX =
+    PREDEFINED_POLYGON.reduce((sum, point) => sum + point[0], 0) /
+    PREDEFINED_POLYGON.length;
 
-let originalImageData = null;
-let mask = null;
+  const centerY =
+    PREDEFINED_POLYGON.reduce((sum, point) => sum + point[1], 0) /
+    PREDEFINED_POLYGON.length;
 
-let drawing = false;
-let lastPos = null;
+  const dx = x - centerX;
+  const dy = y - centerY;
+  const length = Math.sqrt(dx * dx + dy * dy) || 1;
 
-let mode = "predefined";
+  return [
+    x + (dx / length) * POLYGON_EXPANSION,
+    y + (dy / length) * POLYGON_EXPANSION,
+  ];
+});
 
-let sourceImage = null;
+/* ---------------- Theme ---------------- */
 
+themeToggle.addEventListener("click", () => {
+  const html = document.documentElement;
+  const current = html.getAttribute("data-theme");
+  const next = current === "dark" ? "light" : "dark";
 
-// ============================================================
-// MODE
-// ============================================================
+  html.setAttribute("data-theme", next);
+});
 
-function setMode(newMode) {
-  mode = newMode;
+/* ---------------- Upload ---------------- */
 
-  if (mode === "predefined") {
-    modePredefined.classList.add("active");
-    modeDoodle.classList.remove("active");
+uploadBtn.addEventListener("click", () => {
+  upload.click();
+});
 
-    brushRow.classList.add("hidden");
-
-    modeTitle.textContent = "Predefined area";
-    predefinedHint.classList.remove("hidden");
-  } else {
-    modeDoodle.classList.add("active");
-    modePredefined.classList.remove("active");
-
-    brushRow.classList.remove("hidden");
-
-    modeTitle.textContent = "Doodle area";
-    predefinedHint.classList.add("hidden");
-  }
-
-  redraw();
-}
-
-modePredefined.addEventListener(
-  "click",
-  () => setMode("predefined")
-);
-
-modeDoodle.addEventListener(
-  "click",
-  () => setMode("doodle")
-);
-
-
-// ============================================================
-// UPLOAD
-// ============================================================
-
-uploadBtn.addEventListener(
-  "click",
-  () => uploadInput.click()
-);
-
-uploadAnother.addEventListener(
-  "click",
-  () => uploadInput.click()
-);
-
-uploadInput.addEventListener("change", (event) => {
-  const file = event.target.files[0];
-
+upload.addEventListener("change", () => {
+  const file = upload.files?.[0];
   if (!file) return;
-
-  const url = URL.createObjectURL(file);
 
   const img = new Image();
 
   img.onload = () => {
-    sourceImage = img;
-
-    // Keep the image square.
-    // The healing coordinates are designed for 1:1 images.
-    if (img.width !== img.height) {
-      alert(
-        "Please use a 1:1 square image for this healing tool."
-      );
-
-      URL.revokeObjectURL(url);
-      uploadInput.value = "";
-      return;
-    }
-
-    // Keep enough resolution for good healing,
-    // while avoiding enormous browser canvases.
-    const MAX_SIZE = 1600;
-
-    const scale = Math.min(
-      1,
-      MAX_SIZE / img.width
-    );
+    const maxW = Math.min(window.innerWidth - 24, 1200);
+    const scale = Math.min(1, maxW / img.width);
 
     canvas.width = Math.round(img.width * scale);
     canvas.height = Math.round(img.height * scale);
 
-    ctx.clearRect(
-      0,
-      0,
-      canvas.width,
-      canvas.height
-    );
-
-    ctx.drawImage(
-      img,
-      0,
-      0,
-      canvas.width,
-      canvas.height
-    );
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
     originalImageData = ctx.getImageData(
       0,
@@ -229,609 +99,357 @@ uploadInput.addEventListener("change", (event) => {
       canvas.height
     );
 
-    mask = new Uint8Array(
-      canvas.width * canvas.height
-    );
+    mask = new Uint8Array(canvas.width * canvas.height);
 
     emptyState.classList.add("hidden");
     workspace.classList.remove("hidden");
 
-    setMode(mode);
+    setMode("predefined");
+    redrawOverlay();
 
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(img.src);
   };
 
-  img.onerror = () => {
-    alert("Unable to open this image.");
-    URL.revokeObjectURL(url);
-  };
-
-  img.src = url;
+  img.src = URL.createObjectURL(file);
 });
 
+/* ---------------- Modes ---------------- */
 
-// ============================================================
-// DRAW
-// ============================================================
+function setMode(nextMode) {
+  mode = nextMode;
 
-function redraw() {
+  modePredefined.classList.toggle(
+    "active",
+    mode === "predefined"
+  );
+
+  modeDoodle.classList.toggle(
+    "active",
+    mode === "doodle"
+  );
+
+  brushRow.classList.toggle(
+    "hidden",
+    mode !== "doodle"
+  );
+
+  if (mode === "predefined") {
+    buildPredefinedMask();
+  } else {
+    mask.fill(0);
+  }
+
+  redrawOverlay();
+}
+
+modePredefined.addEventListener("click", () => {
+  setMode("predefined");
+});
+
+modeDoodle.addEventListener("click", () => {
+  setMode("doodle");
+});
+
+/* ---------------- Predefined mask ---------------- */
+
+function buildPredefinedMask() {
+  if (!canvas.width || !canvas.height || !mask) return;
+
+  mask.fill(0);
+
+  const points = EXPANDED_POLYGON.map(([nx, ny]) => [
+    nx * canvas.width,
+    ny * canvas.height,
+  ]);
+
+  for (let y = 0; y < canvas.height; y++) {
+    for (let x = 0; x < canvas.width; x++) {
+      if (pointInPolygon(x + 0.5, y + 0.5, points)) {
+        mask[y * canvas.width + x] = 1;
+      }
+    }
+  }
+}
+
+function pointInPolygon(x, y, polygon) {
+  let inside = false;
+
+  for (
+    let i = 0, j = polygon.length - 1;
+    i < polygon.length;
+    j = i++
+  ) {
+    const xi = polygon[i][0];
+    const yi = polygon[i][1];
+
+    const xj = polygon[j][0];
+    const yj = polygon[j][1];
+
+    const intersects =
+      yi > y !== yj > y &&
+      x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+
+    if (intersects) {
+      inside = !inside;
+    }
+  }
+
+  return inside;
+}
+
+/* ---------------- Drawing overlay ---------------- */
+
+function redrawOverlay() {
   if (!originalImageData) return;
 
-  ctx.putImageData(
-    originalImageData,
-    0,
-    0
-  );
+  ctx.putImageData(originalImageData, 0, 0);
 
   if (mode === "predefined") {
     drawPredefinedOverlay();
   } else {
-    drawMaskOverlay();
+    drawDoodleOverlay();
   }
 }
 
-
-// ============================================================
-// PREDEFINED OVERLAY
-// ============================================================
-
 function drawPredefinedOverlay() {
-  const W = canvas.width;
-  const H = canvas.height;
-
-  const pts = PREDEFINED_POLYGON.map(
-    ([x, y]) => [
-      x * W,
-      y * H
-    ]
-  );
+  const points = EXPANDED_POLYGON.map(([nx, ny]) => [
+    nx * canvas.width,
+    ny * canvas.height,
+  ]);
 
   ctx.save();
 
   ctx.beginPath();
+  ctx.moveTo(points[0][0], points[0][1]);
 
-  ctx.moveTo(
-    pts[0][0],
-    pts[0][1]
-  );
-
-  for (let i = 1; i < pts.length; i++) {
-    ctx.lineTo(
-      pts[i][0],
-      pts[i][1]
-    );
+  for (let i = 1; i < points.length; i++) {
+    ctx.lineTo(points[i][0], points[i][1]);
   }
 
   ctx.closePath();
 
-  // Selected area
-  ctx.fillStyle =
-    "rgba(139, 108, 255, 0.28)";
-
+  ctx.fillStyle = "rgba(255, 69, 58, 0.22)";
   ctx.fill();
 
-  // Border
-  ctx.strokeStyle =
-    "rgba(174, 157, 255, 0.95)";
-
-  ctx.lineWidth =
-    Math.max(2, W / 500);
-
+  ctx.strokeStyle = "#ff453a";
+  ctx.lineWidth = Math.max(1.5, canvas.width / 700);
   ctx.stroke();
-
-  // Handles
-  for (const [x, y] of pts) {
-    ctx.beginPath();
-
-    ctx.arc(
-      x,
-      y,
-      Math.max(5, W / 110),
-      0,
-      Math.PI * 2
-    );
-
-    ctx.fillStyle = "#ffffff";
-    ctx.fill();
-
-    ctx.strokeStyle = "#8b6cff";
-    ctx.lineWidth = 2;
-    ctx.stroke();
-  }
 
   ctx.restore();
 }
 
-
-// ============================================================
-// DOODLE OVERLAY
-// ============================================================
-
-function drawMaskOverlay() {
+function drawDoodleOverlay() {
   if (!mask) return;
 
-  const W = canvas.width;
-  const H = canvas.height;
-
-  const img = ctx.getImageData(
-    0,
-    0,
-    W,
-    H
+  const overlay = ctx.createImageData(
+    canvas.width,
+    canvas.height
   );
-
-  const data = img.data;
 
   for (let i = 0; i < mask.length; i++) {
     if (!mask[i]) continue;
 
     const p = i * 4;
 
-    data[p] =
-      Math.round(data[p] * 0.45 + 139 * 0.55);
-
-    data[p + 1] =
-      Math.round(data[p + 1] * 0.45 + 108 * 0.55);
-
-    data[p + 2] =
-      Math.round(data[p + 2] * 0.45 + 255 * 0.55);
-
-    data[p + 3] = 255;
+    overlay.data[p] = 255;
+    overlay.data[p + 1] = 69;
+    overlay.data[p + 2] = 58;
+    overlay.data[p + 3] = 85;
   }
 
-  ctx.putImageData(img, 0, 0);
+  ctx.putImageData(overlay, 0, 0);
 }
 
+/* ---------------- Doodle ---------------- */
 
-// ============================================================
-// POINTER POSITION
-// ============================================================
+canvas.addEventListener("pointerdown", (event) => {
+  if (mode !== "doodle" || !mask) return;
 
-function getPos(event) {
-  const rect =
-    canvas.getBoundingClientRect();
+  drawing = true;
+  canvas.setPointerCapture(event.pointerId);
 
-  const clientX =
-    event.touches
-      ? event.touches[0].clientX
-      : event.clientX;
+  lastPos = getCanvasPosition(event);
+  paint(lastPos.x, lastPos.y);
+});
 
-  const clientY =
-    event.touches
-      ? event.touches[0].clientY
-      : event.clientY;
+canvas.addEventListener("pointermove", (event) => {
+  if (!drawing || mode !== "doodle") return;
+
+  const pos = getCanvasPosition(event);
+
+  drawLine(
+    lastPos.x,
+    lastPos.y,
+    pos.x,
+    pos.y
+  );
+
+  lastPos = pos;
+});
+
+canvas.addEventListener("pointerup", () => {
+  drawing = false;
+  lastPos = null;
+});
+
+canvas.addEventListener("pointercancel", () => {
+  drawing = false;
+  lastPos = null;
+});
+
+function getCanvasPosition(event) {
+  const rect = canvas.getBoundingClientRect();
 
   return {
     x:
-      (clientX - rect.left) *
-      (canvas.width / rect.width),
+      ((event.clientX - rect.left) / rect.width) *
+      canvas.width,
 
     y:
-      (clientY - rect.top) *
-      (canvas.height / rect.height)
+      ((event.clientY - rect.top) / rect.height) *
+      canvas.height,
   };
 }
 
+function paint(x, y) {
+  const radius = Number(brush.value) / 2;
 
-// ============================================================
-// DOODLE PAINTING
-// ============================================================
+  const minX = Math.max(0, Math.floor(x - radius));
+  const maxX = Math.min(
+    canvas.width - 1,
+    Math.ceil(x + radius)
+  );
 
-function paintAt(x, y) {
-  if (!mask) return;
+  const minY = Math.max(0, Math.floor(y - radius));
+  const maxY = Math.min(
+    canvas.height - 1,
+    Math.ceil(y + radius)
+  );
 
-  const r =
-    Number(brushSlider.value);
-
-  const x0 =
-    Math.max(0, Math.floor(x - r));
-
-  const x1 =
-    Math.min(
-      canvas.width - 1,
-      Math.ceil(x + r)
-    );
-
-  const y0 =
-    Math.max(0, Math.floor(y - r));
-
-  const y1 =
-    Math.min(
-      canvas.height - 1,
-      Math.ceil(y + r)
-    );
-
-  for (let py = y0; py <= y1; py++) {
-    for (let px = x0; px <= x1; px++) {
-
+  for (let py = minY; py <= maxY; py++) {
+    for (let px = minX; px <= maxX; px++) {
       const dx = px - x;
       const dy = py - y;
 
-      if (
-        dx * dx +
-        dy * dy <=
-        r * r
-      ) {
-        mask[
-          py * canvas.width + px
-        ] = 1;
+      if (dx * dx + dy * dy <= radius * radius) {
+        mask[py * canvas.width + px] = 1;
       }
     }
   }
 }
 
-function onPointerDown(event) {
-  if (mode !== "doodle") return;
+function drawLine(x1, y1, x2, y2) {
+  const distance = Math.hypot(x2 - x1, y2 - y1);
+  const step = Math.max(1, Number(brush.value) / 4);
 
-  event.preventDefault();
+  for (let i = 0; i <= distance; i += step) {
+    const t = distance === 0 ? 0 : i / distance;
 
-  drawing = true;
+    const x = x1 + (x2 - x1) * t;
+    const y = y1 + (y2 - y1) * t;
 
-  lastPos = getPos(event);
-
-  paintAt(
-    lastPos.x,
-    lastPos.y
-  );
-
-  redraw();
-}
-
-function onPointerMove(event) {
-  if (
-    mode !== "doodle" ||
-    !drawing
-  ) {
-    return;
+    paint(x, y);
   }
 
-  event.preventDefault();
-
-  const p = getPos(event);
-
-  const distance =
-    Math.hypot(
-      p.x - lastPos.x,
-      p.y - lastPos.y
-    );
-
-  const steps =
-    Math.max(
-      1,
-      Math.ceil(distance / 4)
-    );
-
-  for (let i = 1; i <= steps; i++) {
-
-    const t = i / steps;
-
-    paintAt(
-      lastPos.x +
-        (p.x - lastPos.x) * t,
-
-      lastPos.y +
-        (p.y - lastPos.y) * t
-    );
-  }
-
-  lastPos = p;
-
-  redraw();
+  redrawOverlay();
 }
 
-function onPointerUp() {
-  drawing = false;
-  lastPos = null;
-}
+/* ---------------- Generate ---------------- */
 
-canvas.addEventListener(
-  "mousedown",
-  onPointerDown
-);
+generateBtn.addEventListener("click", async () => {
+  if (!originalImageData || !mask) return;
 
-canvas.addEventListener(
-  "mousemove",
-  onPointerMove
-);
+  generateBtn.disabled = true;
+  generateBtn.textContent = "Healing...";
 
-canvas.addEventListener(
-  "mouseup",
-  onPointerUp
-);
-
-canvas.addEventListener(
-  "mouseleave",
-  onPointerUp
-);
-
-canvas.addEventListener(
-  "touchstart",
-  onPointerDown,
-  { passive: false }
-);
-
-canvas.addEventListener(
-  "touchmove",
-  onPointerMove,
-  { passive: false }
-);
-
-canvas.addEventListener(
-  "touchend",
-  onPointerUp
-);
-
-
-// ============================================================
-// PREDEFINED POLYGON → MASK
-// ============================================================
-
-function buildPredefinedMask() {
-  const W = canvas.width;
-  const H = canvas.height;
-
-  const m =
-    new Uint8Array(W * H);
-
-  const pts =
-    PREDEFINED_POLYGON.map(
-      ([x, y]) => [
-        x * W,
-        y * H
-      ]
+  try {
+    const working = new ImageData(
+      new Uint8ClampedArray(originalImageData.data),
+      originalImageData.width,
+      originalImageData.height
     );
 
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
+    let activeMask;
 
-  for (const [x, y] of pts) {
-    minX = Math.min(minX, x);
-    minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x);
-    maxY = Math.max(maxY, y);
-  }
-
-  minX = Math.max(
-    0,
-    Math.floor(minX)
-  );
-
-  minY = Math.max(
-    0,
-    Math.floor(minY)
-  );
-
-  maxX = Math.min(
-    W - 1,
-    Math.ceil(maxX)
-  );
-
-  maxY = Math.min(
-    H - 1,
-    Math.ceil(maxY)
-  );
-
-  function pointInPolygon(px, py) {
-    let inside = false;
-
-    for (
-      let i = 0,
-      j = pts.length - 1;
-      i < pts.length;
-      j = i++
-    ) {
-      const xi = pts[i][0];
-      const yi = pts[i][1];
-
-      const xj = pts[j][0];
-      const yj = pts[j][1];
-
-      const intersect =
-        ((yi > py) !== (yj > py)) &&
-        (
-          px <
-          ((xj - xi) *
-            (py - yi)) /
-            (yj - yi || 1e-9) +
-            xi
-        );
-
-      if (intersect) {
-        inside = !inside;
-      }
+    if (mode === "predefined") {
+      buildPredefinedMask();
+      activeMask = mask;
+    } else {
+      activeMask = mask;
     }
 
-    return inside;
-  }
+    await new Promise((resolve) => setTimeout(resolve, 30));
 
-  for (let y = minY; y <= maxY; y++) {
-    for (let x = minX; x <= maxX; x++) {
-
-      if (
-        pointInPolygon(
-          x + 0.5,
-          y + 0.5
-        )
-      ) {
-        m[
-          y * W + x
-        ] = 1;
-      }
-    }
-  }
-
-  return m;
-}
-
-
-// ============================================================
-// GENERATE / HEAL
-// ============================================================
-
-generateBtn.addEventListener(
-  "click",
-  async () => {
-
-    if (!originalImageData) return;
-
-    generateBtn.disabled = true;
-    generateBtn.innerHTML =
-      "<span>✦</span> Healing…";
-
-    // Always start from the current image.
-    const working =
-      new ImageData(
-        new Uint8ClampedArray(
-          originalImageData.data
-        ),
-        canvas.width,
-        canvas.height
-      );
-
-    const activeMask =
-      mode === "predefined"
-        ? buildPredefinedMask()
-        : mask;
-
-    // Give the browser a frame before
-    // doing the expensive operation.
-    await new Promise(
-      resolve => setTimeout(resolve, 30)
+    const result = window.inpaint(
+      working,
+      activeMask,
+      5
     );
 
-    try {
-      window.inpaint(
-        working,
-        activeMask,
-        12
-      );
+    originalImageData = result;
 
-      ctx.putImageData(
-        working,
-        0,
-        0
-      );
+    mask = new Uint8Array(
+      canvas.width * canvas.height
+    );
 
-      // The healed result becomes the
-      // new source for another healing pass.
-      originalImageData =
-        ctx.getImageData(
-          0,
-          0,
-          canvas.width,
-          canvas.height
-        );
-
-      mask =
-        new Uint8Array(
-          canvas.width *
-          canvas.height
-        );
-
-    } catch (error) {
-      console.error(error);
-
-      alert(
-        "Healing failed. Try a smaller area."
-      );
-    }
-
+    ctx.putImageData(originalImageData, 0, 0);
+  } catch (error) {
+    console.error(error);
+    alert("Healing failed. Please try again.");
+  } finally {
     generateBtn.disabled = false;
-
-    generateBtn.innerHTML =
-      "<span>✦</span> Heal selected area";
-
-    redraw();
+    generateBtn.textContent = "✨ Generate";
   }
-);
+});
 
+/* ---------------- Reset ---------------- */
 
-// ============================================================
-// RESET
-// ============================================================
+resetBtn.addEventListener("click", () => {
+  if (!originalImageData) return;
 
-resetBtn.addEventListener(
-  "click",
-  () => {
-
-    if (!originalImageData) return;
-
-    mask =
-      new Uint8Array(
-        canvas.width *
-        canvas.height
-      );
-
-    redraw();
+  if (mode === "predefined") {
+    buildPredefinedMask();
+  } else {
+    mask.fill(0);
   }
-);
 
+  redrawOverlay();
+});
 
-// ============================================================
-// SAVE
-// ============================================================
+/* ---------------- Download ---------------- */
 
-downloadBtn.addEventListener(
-  "click",
-  () => {
+downloadBtn.addEventListener("click", () => {
+  if (!originalImageData) return;
 
-    if (!originalImageData) return;
+  const exportCanvas = document.createElement("canvas");
 
-    const output =
-      document.createElement("canvas");
+  exportCanvas.width = originalImageData.width;
+  exportCanvas.height = originalImageData.height;
 
-    output.width =
-      canvas.width;
+  const exportCtx = exportCanvas.getContext("2d");
 
-    output.height =
-      canvas.height;
+  exportCtx.putImageData(
+    originalImageData,
+    0,
+    0
+  );
 
-    const outputCtx =
-      output.getContext("2d");
+  exportCanvas.toBlob((blob) => {
+    if (!blob) return;
 
-    outputCtx.putImageData(
-      originalImageData,
-      0,
-      0
-    );
+    const link = document.createElement("a");
 
-    const link =
-      document.createElement("a");
-
-    link.download =
-      "healed.png";
-
-    link.href =
-      output.toDataURL(
-        "image/png"
-      );
+    link.download = "healed-image.png";
+    link.href = URL.createObjectURL(blob);
 
     link.click();
-  }
-);
 
+    setTimeout(() => {
+      URL.revokeObjectURL(link.href);
+    }, 1000);
+  }, "image/png");
+});
 
-// ============================================================
-// BRUSH LABEL
-// ============================================================
-
-function updateBrushLabel() {
-  brushValue.textContent =
-    `${brushSlider.value} px`;
-}
-
-brushSlider.addEventListener(
-  "input",
-  updateBrushLabel
-);
-
-updateBrushLabel();
-
-
-// ============================================================
-// INITIAL
-// ============================================================
+/* ---------------- Initial state ---------------- */
 
 setMode("predefined");
