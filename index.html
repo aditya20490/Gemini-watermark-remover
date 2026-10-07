@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Heal Tool</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Heal</h1>
+  </header>
+
+  <main>
+    <input type="file" id="upload" accept="image/*" hidden />
+    <button id="uploadBtn">📁 Upload Image</button>
+
+    <div id="workspace" class="hidden">
+      <canvas id="canvas"></canvas>
+      <div class="controls">
+        <label>Brush <input type="range" id="brush" min="5" max="80" value="25" /></label>
+        <button id="generate">✨ Generate</button>
+        <button id="download">⬇️ Download</button>
+        <button id="reset">↺ Reset</button>
+      </div>
+    </div>
+  </main>
+
+  <script src="inpaint.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
