@@ -1,287 +1,160 @@
-// ============================================================
-// CONTENT-AWARE HEALING ENGINE
-// ============================================================
-//
-// This is a browser-only healing algorithm.
-//
-// Instead of simply averaging every surrounding pixel,
-// it searches nearby source patches and copies texture
-// from the most suitable surrounding area.
-//
-// Best for small unwanted objects, marks, spots and text.
-// ============================================================
-
-function inpaint(imageData, mask, radius = 12) {
+function inpaint(imageData, mask, radius = 8) {
   const width = imageData.width;
   const height = imageData.height;
   const data = imageData.data;
 
   const total = width * height;
 
-  const original = new Uint8ClampedArray(data);
+  const original =
+    new Uint8ClampedArray(data);
 
-  const target = new Uint8Array(total);
+  const workingMask =
+    new Uint8Array(mask);
+
+  let remaining = 0;
 
   for (let i = 0; i < total; i++) {
-    target[i] = mask[i] ? 1 : 0;
-  }
-
-  // ----------------------------------------------------------
-  // Find bounding box of the healing region
-  // ----------------------------------------------------------
-
-  let minX = width;
-  let minY = height;
-  let maxX = -1;
-  let maxY = -1;
-
-  for (let y = 0; y < height; y++) {
-    for (let x = 0; x < width; x++) {
-
-      if (!target[y * width + x]) continue;
-
-      minX = Math.min(minX, x);
-      minY = Math.min(minY, y);
-      maxX = Math.max(maxX, x);
-      maxY = Math.max(maxY, y);
+    if (workingMask[i]) {
+      remaining++;
     }
   }
 
-  if (maxX < 0) {
+  if (!remaining) {
     return imageData;
   }
 
-  // ----------------------------------------------------------
-  // Expand search area around selected region
-  // ----------------------------------------------------------
-
-  const searchPadding =
+  /*
+   * Fill the mask from its outside edge
+   * toward the center.
+   */
+  const maxIterations =
     Math.max(
-      30,
-      Math.min(
-        100,
-        radius * 5
-      )
+      width,
+      height
     );
-
-  const searchMinX =
-    Math.max(
-      0,
-      minX - searchPadding
-    );
-
-  const searchMinY =
-    Math.max(
-      0,
-      minY - searchPadding
-    );
-
-  const searchMaxX =
-    Math.min(
-      width - 1,
-      maxX + searchPadding
-    );
-
-  const searchMaxY =
-    Math.min(
-      height - 1,
-      maxY + searchPadding
-    );
-
-  // ----------------------------------------------------------
-  // Distance from mask boundary
-  // ----------------------------------------------------------
-
-  const distance =
-    new Int16Array(total);
-
-  distance.fill(-1);
-
-  const queueX = [];
-  const queueY = [];
 
   for (
-    let y = minY;
-    y <= maxY;
-    y++
+    let iteration = 0;
+    iteration < maxIterations &&
+    remaining > 0;
+    iteration++
   ) {
+    const boundary = [];
+
+    /*
+     * Find pixels touching known image pixels.
+     */
     for (
-      let x = minX;
-      x <= maxX;
-      x++
-    ) {
-
-      const index =
-        y * width + x;
-
-      if (!target[index]) continue;
-
-      let boundary = false;
-
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-
-          if (
-            dx === 0 &&
-            dy === 0
-          ) continue;
-
-          const nx = x + dx;
-          const ny = y + dy;
-
-          if (
-            nx < 0 ||
-            ny < 0 ||
-            nx >= width ||
-            ny >= height
-          ) {
-            boundary = true;
-            continue;
-          }
-
-          if (
-            !target[
-              ny * width + nx
-            ]
-          ) {
-            boundary = true;
-          }
-        }
-      }
-
-      if (boundary) {
-        distance[index] = 0;
-
-        queueX.push(x);
-        queueY.push(y);
-      }
-    }
-  }
-
-  // ----------------------------------------------------------
-  // Fill distance map
-  // ----------------------------------------------------------
-
-  let head = 0;
-
-  while (head < queueX.length) {
-
-    const x = queueX[head];
-    const y = queueY[head];
-
-    head++;
-
-    const current =
-      distance[
-        y * width + x
-      ];
-
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-
-        const nx = x + dx;
-        const ny = y + dy;
-
-        if (
-          nx < minX ||
-          ny < minY ||
-          nx > maxX ||
-          ny > maxY
-        ) continue;
-
-        const ni =
-          ny * width + nx;
-
-        if (
-          !target[ni] ||
-          distance[ni] !== -1
-        ) {
-          continue;
-        }
-
-        distance[ni] =
-          current + 1;
-
-        queueX.push(nx);
-        queueY.push(ny);
-      }
-    }
-  }
-
-  // ----------------------------------------------------------
-  // Process pixels from outside → inside
-  // ----------------------------------------------------------
-
-  let maxDistance = 0;
-
-  for (let i = 0; i < total; i++) {
-    if (
-      distance[i] >
-      maxDistance
-    ) {
-      maxDistance = distance[i];
-    }
-  }
-
-  for (
-    let layer = 0;
-    layer <= maxDistance;
-    layer++
-  ) {
-
-    for (
-      let y = minY;
-      y <= maxY;
+      let y = 0;
+      y < height;
       y++
     ) {
       for (
-        let x = minX;
-        x <= maxX;
+        let x = 0;
+        x < width;
         x++
       ) {
-
         const index =
           y * width + x;
 
-        if (
-          !target[index] ||
-          distance[index] !== layer
-        ) {
+        if (!workingMask[index]) {
           continue;
         }
 
-        const result =
-          findBestSource(
-            x,
-            y,
-            width,
-            height,
-            original,
-            target,
-            searchMinX,
-            searchMinY,
-            searchMaxX,
-            searchMaxY,
-            radius
-          );
+        let isBoundary = false;
 
-        const p =
-          index * 4;
+        for (
+          let dy = -1;
+          dy <= 1;
+          dy++
+        ) {
+          for (
+            let dx = -1;
+            dx <= 1;
+            dx++
+          ) {
+            if (
+              dx === 0 &&
+              dy === 0
+            ) {
+              continue;
+            }
 
-        data[p] = result[0];
-        data[p + 1] = result[1];
-        data[p + 2] = result[2];
-        data[p + 3] = 255;
+            const nx = x + dx;
+            const ny = y + dy;
 
-        // Mark this pixel as available
-        // for subsequent inner pixels.
-        original[p] = result[0];
-        original[p + 1] = result[1];
-        original[p + 2] = result[2];
-        original[p + 3] = 255;
+            if (
+              nx < 0 ||
+              ny < 0 ||
+              nx >= width ||
+              ny >= height
+            ) {
+              continue;
+            }
 
-        target[index] = 0;
+            if (
+              !workingMask[
+                ny * width + nx
+              ]
+            ) {
+              isBoundary = true;
+              break;
+            }
+          }
+
+          if (isBoundary) break;
+        }
+
+        if (isBoundary) {
+          boundary.push(index);
+        }
       }
+    }
+
+    if (!boundary.length) {
+      break;
+    }
+
+    /*
+     * Heal this boundary.
+     */
+    for (const index of boundary) {
+      const x = index % width;
+      const y = Math.floor(
+        index / width
+      );
+
+      const color =
+        estimatePixel(
+          x,
+          y,
+          width,
+          height,
+          data,
+          workingMask,
+          radius
+        );
+
+      const p = index * 4;
+
+      data[p] = color[0];
+      data[p + 1] = color[1];
+      data[p + 2] = color[2];
+      data[p + 3] = 255;
+
+      workingMask[index] = 0;
+
+      remaining--;
+    }
+
+    /*
+     * Yield to the browser so the
+     * phone doesn't appear frozen.
+     */
+    if (
+      iteration % 3 === 0
+    ) {
+      awaitFrame();
     }
   }
 
@@ -289,152 +162,28 @@ function inpaint(imageData, mask, radius = 12) {
 }
 
 
-// ============================================================
-// FIND BEST SOURCE
-// ============================================================
-
-function findBestSource(
-  tx,
-  ty,
+function estimatePixel(
+  x,
+  y,
   width,
   height,
   data,
   mask,
-  minX,
-  minY,
-  maxX,
-  maxY,
   radius
 ) {
-  const patchRadius =
+  let sumR = 0;
+  let sumG = 0;
+  let sumB = 0;
+  let sumWeight = 0;
+
+  const r =
     Math.max(
       2,
       Math.min(
-        6,
-        Math.floor(radius / 2)
+        radius,
+        10
       )
     );
-
-  const candidates = [];
-
-  const searchStep =
-    Math.max(
-      2,
-      Math.floor(
-        patchRadius / 2
-      )
-    );
-
-  // ----------------------------------------------------------
-  // Search around the healing region.
-  // ----------------------------------------------------------
-
-  for (
-    let y = minY;
-    y <= maxY;
-    y += searchStep
-  ) {
-    for (
-      let x = minX;
-      x <= maxX;
-      x += searchStep
-    ) {
-
-      // Source cannot overlap the
-      // original healing area.
-      if (
-        mask[
-          y * width + x
-        ]
-      ) {
-        continue;
-      }
-
-      const score =
-        comparePatch(
-          tx,
-          ty,
-          x,
-          y,
-          width,
-          height,
-          data,
-          mask,
-          patchRadius
-        );
-
-      if (
-        Number.isFinite(score)
-      ) {
-        candidates.push({
-          x,
-          y,
-          score
-        });
-      }
-    }
-  }
-
-  if (!candidates.length) {
-    return fallbackAverage(
-      tx,
-      ty,
-      width,
-      height,
-      data,
-      mask,
-      radius
-    );
-  }
-
-  candidates.sort(
-    (a, b) =>
-      a.score - b.score
-  );
-
-  // Randomize slightly among the
-  // very best matches so the result
-  // does not look mechanically copied.
-  const topCount =
-    Math.min(
-      4,
-      candidates.length
-    );
-
-  const chosen =
-    candidates[
-      Math.floor(
-        Math.random() * topCount
-      )
-    ];
-
-  return sampleColor(
-    chosen.x,
-    chosen.y,
-    width,
-    height,
-    data
-  );
-}
-
-
-// ============================================================
-// PATCH COMPARISON
-// ============================================================
-
-function comparePatch(
-  tx,
-  ty,
-  sx,
-  sy,
-  width,
-  height,
-  data,
-  mask,
-  r
-) {
-  let score = 0;
-  let samples = 0;
 
   for (
     let dy = -r;
@@ -446,159 +195,21 @@ function comparePatch(
       dx <= r;
       dx++
     ) {
-
       if (
-        dx * dx +
-        dy * dy >
-        r * r
+        dx === 0 &&
+        dy === 0
       ) {
         continue;
       }
 
-      const targetX =
-        tx + dx;
-
-      const targetY =
-        ty + dy;
-
-      const sourceX =
-        sx + dx;
-
-      const sourceY =
-        sy + dy;
+      const distance =
+        Math.hypot(dx, dy);
 
       if (
-        targetX < 0 ||
-        targetY < 0 ||
-        targetX >= width ||
-        targetY >= height ||
-        sourceX < 0 ||
-        sourceY < 0 ||
-        sourceX >= width ||
-        sourceY >= height
+        distance > r
       ) {
         continue;
       }
-
-      const targetIndex =
-        targetY * width +
-        targetX;
-
-      // Only compare pixels that are
-      // already known/outside the healing area.
-      if (mask[targetIndex]) {
-        continue;
-      }
-
-      const sourceIndex =
-        sourceY * width +
-        sourceX;
-
-      if (mask[sourceIndex]) {
-        continue;
-      }
-
-      const tp =
-        targetIndex * 4;
-
-      const sp =
-        sourceIndex * 4;
-
-      const dr =
-        data[tp] -
-        data[sp];
-
-      const dg =
-        data[tp + 1] -
-        data[sp + 1];
-
-      const db =
-        data[tp + 2] -
-        data[sp + 2];
-
-      score +=
-        dr * dr +
-        dg * dg +
-        db * db;
-
-      samples++;
-    }
-  }
-
-  if (samples < 3) {
-    return Infinity;
-  }
-
-  return score / samples;
-}
-
-
-// ============================================================
-// COLOR SAMPLE
-// ============================================================
-
-function sampleColor(
-  x,
-  y,
-  width,
-  height,
-  data
-) {
-  x = Math.max(
-    0,
-    Math.min(
-      width - 1,
-      Math.round(x)
-    )
-  );
-
-  y = Math.max(
-    0,
-    Math.min(
-      height - 1,
-      Math.round(y)
-    )
-  );
-
-  const p =
-    (y * width + x) * 4;
-
-  return [
-    data[p],
-    data[p + 1],
-    data[p + 2]
-  ];
-}
-
-
-// ============================================================
-// FALLBACK
-// ============================================================
-
-function fallbackAverage(
-  x,
-  y,
-  width,
-  height,
-  data,
-  mask,
-  radius
-) {
-  let r = 0;
-  let g = 0;
-  let b = 0;
-  let count = 0;
-
-  for (
-    let dy = -radius;
-    dy <= radius;
-    dy++
-  ) {
-    for (
-      let dx = -radius;
-      dx <= radius;
-      dx++
-    ) {
 
       const nx = x + dx;
       const ny = y + dy;
@@ -619,18 +230,32 @@ function fallbackAverage(
         continue;
       }
 
+      /*
+       * Nearby pixels have greater influence.
+       */
+      const weight =
+        1 /
+        (distance * distance);
+
       const p =
         index * 4;
 
-      r += data[p];
-      g += data[p + 1];
-      b += data[p + 2];
+      sumR +=
+        data[p] * weight;
 
-      count++;
+      sumG +=
+        data[p + 1] *
+        weight;
+
+      sumB +=
+        data[p + 2] *
+        weight;
+
+      sumWeight += weight;
     }
   }
 
-  if (!count) {
+  if (!sumWeight) {
     return [
       128,
       128,
@@ -639,15 +264,29 @@ function fallbackAverage(
   }
 
   return [
-    Math.round(r / count),
-    Math.round(g / count),
-    Math.round(b / count)
+    Math.round(
+      sumR / sumWeight
+    ),
+    Math.round(
+      sumG / sumWeight
+    ),
+    Math.round(
+      sumB / sumWeight
+    )
   ];
 }
 
 
-// ============================================================
-// EXPORT
-// ============================================================
+function awaitFrame() {
+  return new Promise(
+    (resolve) => {
+      requestAnimationFrame(
+        resolve
+      );
+    }
+  );
+}
 
-window.inpaint = inpaint;
+
+window.inpaint =
+  inpaint;
